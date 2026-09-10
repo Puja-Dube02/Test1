@@ -1,0 +1,9 @@
+devops-e2e-app has been deployed.
+
+To access the app, port-forward the service:
+
+  kubectl port-forward svc/{{ include "devops-e2e-app.fullname" . }} 8080:{{ .Values.service.port }}
+
+Then check:
+
+  curl http://localhost:8080{{ .Values.probes.path }}

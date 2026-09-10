@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-template:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.2"
+
+      - name: Helm lint
+        working-directory: charts/devops-e2e-app
+        run: helm lint .
+
+      - name: Helm template (default values)
+        working-directory: charts/devops-e2e-app
+        run: helm template test-release .
+
+      - name: Helm template (dev)
+        working-directory: charts/devops-e2e-app
+        run: helm template test-release . -f values-dev.yaml
+
+      - name: Helm template (qa)
+        working-directory: charts/devops-e2e-app
+        run: helm template test-release . -f values-qa.yaml
+
+      - name: Helm template (uat)
+        working-directory: charts/devops-e2e-app
+        run: helm template test-release . -f values-uat.yaml
+
+  deploy-to-kind:
+    needs: lint-and-template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.2"
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: helm-chart-ci
+
+      - name: Create namespace and pull secret
+        run: |
+          kubectl create namespace devops-e2e
+          kubectl create secret docker-registry ghcr-pull-secret \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }} \
+            -n devops-e2e
+
+      - name: Helm install (uat values)
+        working-directory: charts/devops-e2e-app
+        run: |
+          helm install test-release . -f values-uat.yaml -n devops-e2e
+          kubectl -n devops-e2e rollout status deployment/test-release-devops-e2e-app --timeout=120s
+
+      - name: Smoke test /health via port-forward
+        run: |
+          kubectl -n devops-e2e port-forward svc/test-release-devops-e2e-app 8080:80 &
+          sleep 5
+          curl -sf http://localhost:8080/health
